@@ -7,18 +7,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.RequestEntity;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
-
-import java.net.URI;
-import java.net.URL;
-import java.net.URLConnection;
 
 @SpringBootApplication
 @RestController("/")
@@ -52,25 +46,26 @@ public class FaultTolerantSystemServicebApplication {
             logger.info(cr.key().toString());
             logger.info(cr.toString());
 
-            ServiceStatus receivedService=(ServiceStatus) cr.value();
+        ObjectMapper mapper = new ObjectMapper();
+
+        ServiceStatus receivedService = mapper.readValue(cr.value().toString(), ServiceStatus.class);
 
             ServiceStatus serviceStatus = new ServiceStatus();
             serviceStatus.setServiceId("serviceB");
             serviceStatus.setParentServiceId(receivedService.getServiceId());
-            serviceStatus.setStatus(false);
-            ObjectMapper mapper = new ObjectMapper();
+        serviceStatus.setStatus(true);
             String serviceStatusJsonObject = mapper.writeValueAsString(serviceStatus);
-          /*  template.send("serviceC", serviceStatusJsonObject);
-            template.send("serviceD", serviceStatusJsonObject);
-            template.send(SERVICE_TRACKER,SERVICE_NAME,serviceStatusJsonObject);
-
-            getSuccessResponse();*/
-        }
+        template.send("my_topic", "serviceC", serviceStatusJsonObject);
+        template.send("my_topic", "serviceD", serviceStatusJsonObject);
+        template.send(SERVICE_TRACKER, SERVICE_NAME, serviceStatusJsonObject);
+        if (!getSuccessResponse())
+          throw new NullPointerException();
+      }
 
 
     }
 
-    private void getSuccessResponse() throws InterruptedException {
+  public boolean getSuccessResponse() throws InterruptedException {
         Boolean serviceExecutionStatus=false;
         RestTemplate restTemplate = new RestTemplate();
         for(int i=0; i<15; i++){
@@ -79,6 +74,7 @@ public class FaultTolerantSystemServicebApplication {
                 break;
             Thread.sleep(500);
         }
+    return serviceExecutionStatus;
     }
 
 
