@@ -11,8 +11,12 @@ import org.springframework.http.RequestEntity;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
+
+import javax.websocket.server.PathParam;
+import java.util.stream.IntStream;
 
 @SpringBootApplication
 @RestController("/")
@@ -39,37 +43,68 @@ public class FaultTolerantSystemServicebApplication {
         return message;
     }
 
-
-	@KafkaListener(topics = "my_topic")
-    public void listen(ConsumerRecord<?,?> cr) throws Exception{
-	    if(cr.key().toString().equals("serviceB")){
-            logger.info(cr.key().toString());
-            logger.info(cr.toString());
-
-        ObjectMapper mapper = new ObjectMapper();
-
-        ServiceStatus receivedService = mapper.readValue(cr.value().toString(), ServiceStatus.class);
-
-            ServiceStatus serviceStatus = new ServiceStatus();
-            serviceStatus.setServiceId("serviceB");
-            serviceStatus.setParentServiceId(receivedService.getServiceId());
-        serviceStatus.setStatus(true);
-            String serviceStatusJsonObject = mapper.writeValueAsString(serviceStatus);
-        template.send("my_topic", "serviceC", serviceStatusJsonObject);
-        template.send("my_topic", "serviceD", serviceStatusJsonObject);
-        template.send(SERVICE_TRACKER, SERVICE_NAME, serviceStatusJsonObject);
-        if (!getSuccessResponse())
-          throw new NullPointerException();
+    @GetMapping("/service-b")
+    public boolean getReponse(@RequestParam("number") Integer pNumber)throws Exception{
+      RestTemplate restTemplate = new RestTemplate();
+      boolean serviceCStatus=false;
+      boolean serviceDStatus=false;
+      for(int i=1; i<=pNumber; i++){
+        serviceCStatus=restTemplate.getForObject("http://localhost:8084/service-c", Boolean.class);
+        serviceDStatus=restTemplate.getForObject("http://localhost:8011/service-d", Boolean.class);
       }
 
-
+      Thread.sleep(500);
+	  return serviceCStatus==true && serviceDStatus==true;
     }
 
-  public boolean getSuccessResponse() throws InterruptedException {
+  @GetMapping("/service-b/parallel")
+  public boolean getReponseParallel(@RequestParam("number") Integer pNumber)throws Exception{
+    RestTemplate restTemplate = new RestTemplate();
+
+
+    IntStream.range(0,pNumber).parallel().forEach(i->{
+      boolean serviceCStatus=restTemplate.getForObject("http://localhost:8084/service-c", Boolean.class);
+      boolean serviceDStatus=restTemplate.getForObject("http://localhost:8011/service-d", Boolean.class);
+      if(serviceCStatus==false || serviceDStatus==false)
+        throw new NullPointerException();
+    });
+
+    Thread.sleep(500);
+    return true;
+  }
+
+	@KafkaListener(topics = "service-b")
+    public void listen(ConsumerRecord<?,?> cr) throws Exception{
+	  String key=cr.key().toString();
+            logger.info(cr.key().toString());
+            logger.info(cr.toString());
+            int keyValue = Integer.parseInt(key);
+     for(int i=1; i<=Integer.parseInt(key);i++){
+       ObjectMapper mapper = new ObjectMapper();
+
+       ServiceStatus receivedService = mapper.readValue(cr.value().toString(), ServiceStatus.class);
+
+       ServiceStatus serviceStatus = new ServiceStatus();
+       serviceStatus.setServiceId("serviceB"+i);
+       serviceStatus.setParentServiceId(receivedService.getServiceId());
+       serviceStatus.setStatus(true);
+       String serviceStatusJsonObject = mapper.writeValueAsString(serviceStatus);
+       template.send("service-c", ""+i, serviceStatusJsonObject);
+       template.send("service-d", ""+i, serviceStatusJsonObject);
+       template.send(SERVICE_TRACKER, SERVICE_NAME, serviceStatusJsonObject);
+       if (!getSuccessResponse(serviceStatus.getServiceId()))
+         throw new NullPointerException();
+     }
+
+    Thread.sleep(500);
+
+  }
+
+  public boolean getSuccessResponse(String serviceName) throws InterruptedException {
         Boolean serviceExecutionStatus=false;
         RestTemplate restTemplate = new RestTemplate();
-        for(int i=0; i<15; i++){
-            serviceExecutionStatus=restTemplate.getForObject("http://localhost:8099/service?service-name=serviceB&service-number=2", Boolean.class);
+        for(int i=0; i<50; i++){
+            serviceExecutionStatus=restTemplate.getForObject("http://localhost:8099/service?service-name="+serviceName+"&service-number=2", Boolean.class);
             if(serviceExecutionStatus)
                 break;
             Thread.sleep(500);

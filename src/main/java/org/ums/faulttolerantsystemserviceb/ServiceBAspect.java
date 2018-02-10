@@ -1,3 +1,4 @@
+/*
 package org.ums.faulttolerantsystemserviceb;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -22,3 +23,4 @@ public class ServiceBAspect {
      logger.info(cr.key().toString());
     }
 }
+*/
