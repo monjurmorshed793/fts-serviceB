@@ -1,12 +1,14 @@
 package org.ums.faulttolerantsystemserviceb;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.netflix.hystrix.contrib.javanica.annotation.HystrixCommand;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.client.circuitbreaker.EnableCircuitBreaker;
 import org.springframework.http.RequestEntity;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -16,10 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 
 import javax.websocket.server.PathParam;
+import java.util.List;
 import java.util.stream.IntStream;
 
 @SpringBootApplication
 @RestController("/")
+@EnableCircuitBreaker
 public class FaultTolerantSystemServicebApplication {
 
     public static String SERVICE_NAME="serviceB";
@@ -29,6 +33,12 @@ public class FaultTolerantSystemServicebApplication {
 
     @Autowired
     private KafkaTemplate<String, String> template;
+  @Autowired
+  CheckinsRepository mCheckinsRepository;
+  @Autowired
+  NativePartitionService mNativePartitionService;
+  @Autowired
+  PartitionRepository mPartitionRepository;
 
 	public static void main(String[] args)  {
 		SpringApplication.run(FaultTolerantSystemServicebApplication.class, args);
@@ -45,17 +55,34 @@ public class FaultTolerantSystemServicebApplication {
 
     @GetMapping("/service-b")
     public boolean getReponse(@RequestParam("number") Integer pNumber)throws Exception{
-      RestTemplate restTemplate = new RestTemplate();
-      boolean serviceCStatus=false;
-      boolean serviceDStatus=false;
-      for(int i=1; i<=pNumber; i++){
-        serviceCStatus=restTemplate.getForObject("http://localhost:8084/service-c", Boolean.class);
-        serviceDStatus=restTemplate.getForObject("http://localhost:8011/service-d", Boolean.class);
-      }
-
-      Thread.sleep(500);
-	  return serviceCStatus==true && serviceDStatus==true;
+      return syncrhonousServiceCall(pNumber);
     }
+
+
+    public boolean reliable(@RequestParam("number") Integer pNumber){
+	    return false;
+    }
+  @HystrixCommand(fallbackMethod = "reliable")
+  private boolean syncrhonousServiceCall(@RequestParam("number") Integer pNumber) {
+    RestTemplate restTemplate = new RestTemplate();
+    boolean serviceCStatus=false;
+    boolean serviceDStatus=false;
+    Iterable<Checkins> checkins = mCheckinsRepository.findAll();
+    List<Checkins> checkinsList = CrowdSourceUtils.convertFromIterableToList(checkins);
+    checkinsList.sort((o1,o2)->o1.getDate().compareTo(o2.getDate()));
+    //Map<Date, List<Checkins>> listMap = mNativePartitionService.getGroupBy(checkinsList);
+
+  // mNativePartitionService.assignPartitions(checkinsList, 500);
+    for(int i=1; i<=pNumber; i++){
+      serviceCStatus=restTemplate.getForObject("http://localhost:8084/service-c", Boolean.class);
+      serviceDStatus=restTemplate.getForObject("http://localhost:8011/service-d", Boolean.class);
+    }
+
+    return serviceCStatus==true && serviceDStatus==true;
+  }
+
+
+
 
   @GetMapping("/service-b/parallel")
   public boolean getReponseParallel(@RequestParam("number") Integer pNumber)throws Exception{
@@ -69,7 +96,6 @@ public class FaultTolerantSystemServicebApplication {
         throw new NullPointerException();
     });
 
-    Thread.sleep(500);
     return true;
   }
 
